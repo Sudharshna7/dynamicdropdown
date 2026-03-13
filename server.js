@@ -27,20 +27,20 @@ app.get("/tasks", (req, res) => {
     case "firstAttr":
         if (fieldValue === "f2d236ad-b8a8-42f3-aed4-e46b6d81288c") {
             values = [
-            { key: "1a", value: "1a" },
-            { key: "1b", value: "1b" }
+            { key: "Agile Ceremonies and Project Management", value: "Agile Ceremonies and Project Management" },
+            { key: "New Feature Development", value: "New Feature Development" }
             ];
         }
         else if (fieldValue === "3f3c1a34-a76e-45b1-87ca-063dbe62d44b") {
             values = [
-            { key: "2a", value: "2a" },
-            { key: "2b", value: "2b" }
+            { key: "Defect Resolution - Externally Found", value: "Defect Resolution - Externally Found" },
+            { key: "Post Deployment Support", value: "Post Deployment Support" }
             ];
         }
         else if (fieldValue === "f934440e-1edd-4789-9464-de5027b5acd2") {
             values = [
-            { key: "3a", value: "3a" },
-            { key: "3b", value: "3b" }
+            { key: "Concept and Release Planning", value: "Concept and Release Planning" },
+            { key: "Product and Solution Testing", value: "Product and Solution Testing" }
             ];
         }
         break;
