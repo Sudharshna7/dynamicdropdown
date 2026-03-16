@@ -4,23 +4,16 @@ require("dotenv").config();
 
 const app = express();
 
-/* ===============================
-   ENV VARIABLES
-================================ */
 const JIRA_DOMAIN = process.env.JIRA_DOMAIN;
 const EMAIL = process.env.JIRA_EMAIL;
 const API_TOKEN = process.env.JIRA_API_TOKEN;
-const TEMPO_TOKEN = process.env.TEMPO_BEARER_TOKEN;
 
-/* ===============================
-   CACHE
-================================ */
-let cachedFields = null;
-let cachedOptions = {};
+/* Account UUID → Jira Field */
+const accountFieldMap = {
+  "f934440e-1edd-4789-9464-de5027b5acd2": "PS"
+};
 
-/* ===============================
-   HELPERS
-================================ */
+/* Decode helper */
 function decodeHTML(str) {
   if (!str) return "";
   return str
@@ -31,15 +24,8 @@ function decodeHTML(str) {
     .replace(/&#39;/g, "'");
 }
 
-/* ===============================
-   GET JIRA FIELDS (CACHED)
-================================ */
+/* Fetch Jira fields */
 async function getJiraFields() {
-
-  if (cachedFields) {
-    console.log("Using cached Jira fields");
-    return cachedFields;
-  }
 
   const res = await axios.get(
     `${JIRA_DOMAIN}/rest/api/3/field/search`,
@@ -49,27 +35,16 @@ async function getJiraFields() {
     }
   );
 
-  cachedFields = res.data.values;
-  console.log("Jira fields cached");
-
-  return cachedFields;
+  return res.data.values;
 }
 
-/* ===============================
-   GET JIRA OPTIONS (CACHED)
-================================ */
-async function getJiraOptions(fieldId) {
-
-  if (cachedOptions[fieldId]) {
-    console.log("Using cached options");
-    return cachedOptions[fieldId];
-  }
+/* Get Jira options */
+async function getFieldOptions(fieldId) {
 
   const ctx = await axios.get(
     `${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context`,
     {
-      auth: { username: EMAIL, password: API_TOKEN },
-      headers: { Accept: "application/json" }
+      auth: { username: EMAIL, password: API_TOKEN }
     }
   );
 
@@ -78,108 +53,61 @@ async function getJiraOptions(fieldId) {
   const opt = await axios.get(
     `${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context/${contextId}/option`,
     {
-      auth: { username: EMAIL, password: API_TOKEN },
-      headers: { Accept: "application/json" }
+      auth: { username: EMAIL, password: API_TOKEN }
     }
   );
 
-  const values = opt.data.values.map(o => ({
-    id: decodeHTML(o.value),
-    label: decodeHTML(o.value)
+  return opt.data.values.map(o => ({
+    key: o.id,
+    value: decodeHTML(o.value)
   }));
-
-  cachedOptions[fieldId] = values;
-
-  return values;
 }
 
-/* ===============================
-   GET TEMPO ACCOUNT NAME
-================================ */
-async function getTempoAccountName(uuid) {
-
-  const res = await axios.get(
-    "https://api.tempo.io/4/work-attributes/_Account1_",
-    {
-      headers: { Authorization: `Bearer ${TEMPO_TOKEN}` }
-    }
-  );
-
-  return res.data.names[uuid]?.toLowerCase();
-}
-
-/* ===============================
-   MAIN ENDPOINT
-================================ */
+/* Main API */
 app.get("/tasks", async (req, res) => {
 
   const params = req.query;
 
-  /* Tempo verification */
   if (params.tempoVerificationToken) {
     res.setHeader("X-Tempo-Verification-Token", params.tempoVerificationToken);
-    return res.status(200).send("Verified");
+    return res.status(200).send("verified");
   }
 
   const callback = params.callback || "fn";
 
-  let fieldValue;
-
-  for (const [k, v] of Object.entries(params)) {
-    if (k !== "callback") {
-      fieldValue = v;
-      break;
-    }
-  }
+  const uuid = params.firstAttr;
 
   let values = [];
 
   try {
 
-    if (fieldValue) {
+    const jiraFieldName = accountFieldMap[uuid];
 
-      console.log("Tempo UUID:", fieldValue);
+    if (jiraFieldName) {
 
-      /* Get Tempo Account Name */
-      const accountName = await getTempoAccountName(fieldValue);
-
-      console.log("Account:", accountName);
-
-      /* Find Jira Field */
       const fields = await getJiraFields();
 
-      const jiraField = fields.find(
-        f => f.name.toLowerCase() === accountName
+      const field = fields.find(f =>
+        f.name.toLowerCase() === jiraFieldName.toLowerCase()
       );
 
-      if (jiraField) {
-
-        console.log("Matching Jira Field:", jiraField.name);
-
-        values = await getJiraOptions(jiraField.id);
-
-      } else {
-        console.log("No matching Jira field");
+      if (field) {
+        values = await getFieldOptions(field.id);
       }
 
     }
 
   } catch (err) {
-    console.error("Error:", err.message);
+    console.error(err.message);
   }
 
   const response = `${callback}(${JSON.stringify({ values })})`;
 
   res.setHeader("Content-Type", "application/javascript");
-  res.status(200).send(response);
+  res.send(response);
 
 });
 
-/* ===============================
-   START SERVER
-================================ */
-const PORT = 3000;
-
-app.listen(PORT, () => {
-  console.log(`Tempo dropdown API running on ${PORT}`);
+app.listen(3000, () => {
+  console.log("Tempo dropdown API running");
 });
