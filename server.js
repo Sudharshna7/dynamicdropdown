@@ -26,8 +26,10 @@ function decodeHTML(str) {
 
 // Fetch all Jira fields (paginated)
 async function getAllJiraFields() {
-  let startAt = 0, allFields = [], total = 0;
+  let startAt = 0,
+    allFields = [];
   const maxResults = 100;
+  let total = 0;
 
   do {
     const res = await axios.get(
@@ -86,80 +88,62 @@ app.get("/tasks", async (req, res) => {
   }
 
   const callback = params.callback || "fn";
+  console.log("Incoming request params:", params);
 
-  // Grab fieldName and fieldValue from query
-  let fieldName, fieldValue;
-  for (const [k, v] of Object.entries(params)) {
-    if (k === "callback" || k === "tempoVerificationToken") continue;
-    fieldName = k;
-    fieldValue = v;
-    break;
-  }
+  // Grab the Account1 UUID from query parameter (Tempo sends firstAttr or Account1)
+  const account1Uuid = params.Account1 || params.firstAttr;
+  console.log("Account1 UUID selected:", account1Uuid);
 
   let values = [];
 
-  switch (fieldName) {
-    case "firstAttr":
-      try {
-        const accountName = (await getTempoAccountName(fieldValue))?.trim().toLowerCase();
-        if (!accountName) break;
+  if (account1Uuid) {
+    try {
+      // Step 1: Convert UUID → friendly name (e.g., PS, R&D)
+      const accountName = (await getTempoAccountName(account1Uuid))?.trim().toLowerCase();
+      console.log("Mapped Account1 friendly name:", accountName);
 
+      if (accountName) {
+        // Step 2: Fetch all Jira fields
         const jiraFields = await getAllJiraFields();
-        const matchingField = jiraFields.find(f => decodeHTML(f.name.trim().toLowerCase()) === accountName);
-        if (!matchingField) break;
 
-        const contexts = await getJiraFieldContexts(matchingField.id);
-        for (const ctx of contexts) {
-          const options = await getContextOptions(matchingField.id, ctx.id);
-          if (options.length > 0) {
-            values = options.map(opt => ({
-              key: decodeHTML(opt.value || ""),
-              value: decodeHTML(opt.value || "")
-            }));
-            break;
+        // Step 3: Match Jira field by friendly name
+        const matchingField = jiraFields.find(
+          (f) => decodeHTML(f.name.trim().toLowerCase()) === accountName
+        );
+
+        if (matchingField) {
+          console.log("Matching Jira field found:", matchingField.name);
+
+          // Step 4: Get contexts
+          const contexts = await getJiraFieldContexts(matchingField.id);
+
+          // Step 5: Find first context with options
+          for (const ctx of contexts) {
+            const options = await getContextOptions(matchingField.id, ctx.id);
+            if (options.length > 0) {
+              values = options.map((opt) => ({
+                key: decodeHTML(opt.value || ""),
+                value: decodeHTML(opt.value || ""),
+              }));
+              console.log("Options returned:", values.map((v) => v.value));
+              break; // only first context with options
+            }
           }
+        } else {
+          console.warn(`No Jira field matching friendly name '${accountName}' found.`);
         }
-      } catch (err) {
-        console.error("Error fetching Jira options for firstAttr:", err.message);
+      } else {
+        console.warn(`No Tempo friendly name found for UUID: ${account1Uuid}`);
       }
-      break;
-
-    case "secondAttr":
-      try {
-        const accountName = (await getTempoAccountName(fieldValue))?.trim().toLowerCase();
-        if (!accountName) break;
-
-        const jiraFields = await getAllJiraFields();
-        const matchingField = jiraFields.find(f => decodeHTML(f.name.trim().toLowerCase()) === accountName);
-        if (!matchingField) break;
-
-        const contexts = await getJiraFieldContexts(matchingField.id);
-        for (const ctx of contexts) {
-          const options = await getContextOptions(matchingField.id, ctx.id);
-          if (options.length > 0) {
-            values = options.map(opt => ({
-              key: decodeHTML(opt.value || ""),
-              value: decodeHTML(opt.value || "")
-            }));
-            break;
-          }
-        }
-      } catch (err) {
-        console.error("Error fetching Jira options for secondAttr:", err.message);
-      }
-      break;
-
-    default:
-      // Fallback options if fieldName not recognized
-      values = [
-        { key: "1", value: "Category 1" },
-        { key: "2", value: "Category 2" },
-        { key: "3", value: "Category 3" }
-      ];
+    } catch (err) {
+      console.error("Error fetching Jira options:", err.message);
+    }
   }
 
-  // Return JSONP with key Task1 for frontend dropdown
+  // Step 6: Return JSONP keyed as Task1 (for front-end dropdown)
   const response = `${callback}(${JSON.stringify({ Task1: values })})`;
+  console.log("Returning JSONP for Task1:", response);
+
   res.setHeader("Content-Type", "application/javascript");
   res.status(200).send(response);
 });
