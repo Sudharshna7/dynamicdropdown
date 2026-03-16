@@ -98,7 +98,7 @@ app.get("/tasks", async (req, res) => {
 
   if (account1Uuid) {
     try {
-      // Step 1: Convert UUID → friendly name (PS, R&D, etc.)
+      // Step 1: Convert UUID → friendly name (e.g., PS, R&D)
       const accountName = (await getTempoAccountName(account1Uuid))?.trim().toLowerCase();
       console.log("Mapped Account1 friendly name:", accountName);
 
@@ -110,6 +110,7 @@ app.get("/tasks", async (req, res) => {
         const matchingField = jiraFields.find(
           (f) => decodeHTML(f.name.trim().toLowerCase()) === accountName
         );
+
         if (matchingField) {
           console.log("Matching Jira field found:", matchingField.name);
 
@@ -139,9 +140,9 @@ app.get("/tasks", async (req, res) => {
     }
   }
 
-  // Step 6: Return JSONP using key 'values' (like version 1)
-  const response = `${callback}(${JSON.stringify({ values })})`;
-  console.log("Returning JSONP for values:", response);
+  // Step 6: Return JSONP keyed as Task1 (for front-end dropdown)
+  const response = `${callback}(${JSON.stringify({ Task1: values })})`;
+  console.log("Returning JSONP for Task1:", response);
 
   res.setHeader("Content-Type", "application/javascript");
   res.status(200).send(response);
