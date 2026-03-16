@@ -7,8 +7,9 @@ const app = express();
 const JIRA_DOMAIN = process.env.JIRA_DOMAIN;
 const EMAIL = process.env.JIRA_EMAIL;
 const API_TOKEN = process.env.JIRA_API_TOKEN;
+const TEMPO_BEARER_TOKEN = process.env.TEMPO_BEARER_TOKEN;
 
-// Helpers to get fields, contexts, options
+// Helpers to get Jira fields, contexts, options
 async function getJiraCustomFields() {
   const res = await axios.get(`${JIRA_DOMAIN}/rest/api/3/field`, {
     auth: { username: EMAIL, password: API_TOKEN },
@@ -33,6 +34,20 @@ async function getContextOptions(fieldId, contextId) {
   return res.data.values || [];
 }
 
+// Helper to get Tempo Account1 UUID → name mapping
+async function getTempoAccountName(uuid) {
+  try {
+    const res = await axios.get("https://api.tempo.io/4/work-attributes/_Account1_", {
+      headers: { Authorization: `Bearer ${TEMPO_BEARER_TOKEN}` }
+    });
+    const names = res.data.names;
+    return names[uuid]; // returns "PS", "R&D", etc.
+  } catch (err) {
+    console.error("Error fetching Tempo Account1 mapping:", err.message);
+    return null;
+  }
+}
+
 app.get("/tasks", async (req, res) => {
   const params = req.query;
 
@@ -43,50 +58,52 @@ app.get("/tasks", async (req, res) => {
 
   const callback = params.callback || "fn";
 
-  // Assuming first query param is the Account1 attribute
-  let account1Value;
+  // Extract first query param as Account1 UUID
+  let account1Uuid;
   for (const [k, v] of Object.entries(params)) {
     if (k === "callback" || k === "tempoVerificationToken") continue;
-    account1Value = v;
+    account1Uuid = v;
     break;
   }
 
   let values = [];
 
   try {
-    if (account1Value) {
-      // Step 1: Find Jira custom field whose name matches the selected Account1 value
-      const jiraFields = await getJiraCustomFields();
+    if (account1Uuid) {
+      // Step 1: Get the friendly name from Tempo
+      const accountName = await getTempoAccountName(account1Uuid);
 
-      const matchingField = jiraFields.find(f => f.name.toLowerCase() === account1Value.toLowerCase());
-
-      if (!matchingField) {
-        console.warn(`No Jira custom field found named '${account1Value}'`);
+      if (!accountName) {
+        console.warn(`No Tempo name found for UUID ${account1Uuid}`);
       } else {
-        const fieldId = matchingField.id;
+        // Step 2: Find Jira custom field with this name
+        const jiraFields = await getJiraCustomFields();
+        const matchingField = jiraFields.find(f => f.name.toLowerCase() === accountName.toLowerCase());
 
-        // Step 2: Get contexts for this field
-        const contexts = await getJiraFieldContexts(fieldId);
-
-        if (contexts.length === 0) {
-          console.warn(`No contexts found for Jira field '${fieldId}'`);
+        if (!matchingField) {
+          console.warn(`No Jira custom field found named '${accountName}'`);
         } else {
-          // Step 3: Pick first context (or enhance logic if needed)
-          const context = contexts[0];
+          const fieldId = matchingField.id;
 
-          // Step 4: Get options from context
-          const options = await getContextOptions(fieldId, context.id);
+          // Step 3: Get contexts for the Jira field
+          const contexts = await getJiraFieldContexts(fieldId);
 
-          // Step 5: Map to key/value for Tempo dropdown
-          values = options.map(opt => ({
-            key: opt.value,
-            value: opt.value
-          }));
+          if (contexts.length === 0) {
+            console.warn(`No contexts found for Jira field '${fieldId}'`);
+          } else {
+            // Step 4: Pick first context (you can refine selection by project)
+            const context = contexts[0];
+
+            // Step 5: Get options from Jira
+            const options = await getContextOptions(fieldId, context.id);
+
+            values = options.map(opt => ({ key: opt.value, value: opt.value }));
+          }
         }
       }
     }
   } catch (error) {
-    console.error("Error fetching Jira options:", error.message);
+    console.error("Error fetching options dynamically:", error.message);
   }
 
   const response = `${callback}(${JSON.stringify({ values })})`;
