@@ -9,15 +9,37 @@ const EMAIL = process.env.JIRA_EMAIL;
 const API_TOKEN = process.env.JIRA_API_TOKEN;
 const TEMPO_BEARER_TOKEN = process.env.TEMPO_BEARER_TOKEN;
 
-// Helpers
-async function getJiraCustomFields() {
-  const res = await axios.get(`${JIRA_DOMAIN}/rest/api/3/field`, {
-    auth: { username: EMAIL, password: API_TOKEN },
-    headers: { Accept: "application/json" },
-  });
-  return res.data;
+// Decode HTML entities (e.g., &amp; -> &)
+function decodeHTML(str) {
+  return str.replace(/&amp;/g, "&");
 }
 
+// Fetch all Jira fields using paging
+async function getAllJiraFields() {
+  let startAt = 0;
+  const maxResults = 100;
+  let allFields = [];
+  let total = 0;
+
+  do {
+    const res = await axios.get(
+      `${JIRA_DOMAIN}/rest/api/3/field/search?startAt=${startAt}&maxResults=${maxResults}`,
+      {
+        auth: { username: EMAIL, password: API_TOKEN },
+        headers: { Accept: "application/json" },
+      }
+    );
+
+    const data = res.data;
+    allFields = allFields.concat(data.values);
+    total = data.total;
+    startAt += data.values.length;
+  } while (startAt < total);
+
+  return allFields;
+}
+
+// Get contexts for a Jira custom field
 async function getJiraFieldContexts(fieldId) {
   const res = await axios.get(`${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context`, {
     auth: { username: EMAIL, password: API_TOKEN },
@@ -26,6 +48,7 @@ async function getJiraFieldContexts(fieldId) {
   return res.data.values || [];
 }
 
+// Get options for a Jira field context
 async function getContextOptions(fieldId, contextId) {
   const res = await axios.get(
     `${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context/${contextId}/option`,
@@ -37,7 +60,7 @@ async function getContextOptions(fieldId, contextId) {
   return res.data.values || [];
 }
 
-// Get friendly name from Tempo attribute UUID
+// Get friendly name from Tempo UUID
 async function getTempoAccountName(uuid) {
   try {
     const res = await axios.get("https://api.tempo.io/4/work-attributes/_Account1_", {
@@ -49,11 +72,6 @@ async function getTempoAccountName(uuid) {
     console.error("Error fetching Tempo Account1 mapping:", err.message);
     return null;
   }
-}
-
-// Decode HTML entities (like &amp; -> &)
-function decodeHTML(str) {
-  return str.replace(/&amp;/g, "&");
 }
 
 app.get("/tasks", async (req, res) => {
@@ -79,16 +97,17 @@ app.get("/tasks", async (req, res) => {
 
   try {
     if (account1Uuid) {
-      // Step 1: Get friendly name from Tempo
+      // Step 1: Convert UUID to friendly name using Tempo API
       let accountName = await getTempoAccountName(account1Uuid);
-
       if (!accountName) {
         console.warn(`No Tempo name found for UUID ${account1Uuid}`);
       } else {
         accountName = decodeHTML(accountName.trim().toLowerCase());
 
-        // Step 2: Find Jira custom field with matching name
-        const jiraFields = await getJiraCustomFields();
+        // Step 2: Fetch all Jira fields (paged)
+        const jiraFields = await getAllJiraFields();
+
+        // Step 3: Find Jira custom field matching the Tempo-friendly name
         const matchingField = jiraFields.find(
           (f) => decodeHTML(f.name.trim().toLowerCase()) === accountName
         );
@@ -98,18 +117,18 @@ app.get("/tasks", async (req, res) => {
         } else {
           const fieldId = matchingField.id;
 
-          // Step 3: Get contexts for this Jira field
+          // Step 4: Get contexts for the Jira field
           const contexts = await getJiraFieldContexts(fieldId);
           if (contexts.length === 0) {
             console.warn(`No contexts found for Jira field '${fieldId}'`);
           } else {
-            // Pick first context (you can enhance to pick by project/issue type)
+            // Pick first context (can enhance to pick by project if needed)
             const context = contexts[0];
 
-            // Step 4: Get options for the context
+            // Step 5: Get options for the context
             const options = await getContextOptions(fieldId, context.id);
 
-            // Step 5: Map to key/value for Tempo
+            // Step 6: Map to key/value for Tempo dropdown
             values = options.map((opt) => ({ key: opt.value, value: opt.value }));
           }
         }
