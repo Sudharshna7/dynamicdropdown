@@ -1,17 +1,20 @@
-// server.js
 const express = require("express");
 const axios = require("axios");
 require("dotenv").config();
 
 const app = express();
 
-// ===== Environment Variables =====
-const JIRA_DOMAIN = process.env.JIRA_DOMAIN; // e.g., https://yourcompany.atlassian.net
+// ===== ENV =====
+const JIRA_DOMAIN = process.env.JIRA_DOMAIN;
 const EMAIL = process.env.JIRA_EMAIL;
 const API_TOKEN = process.env.JIRA_API_TOKEN;
 const TEMPO_BEARER_TOKEN = process.env.TEMPO_BEARER_TOKEN;
 
-// ===== Helper Functions =====
+// ===== CACHE =====
+const fieldCache = {};       // accountName -> fieldId
+const optionsCache = {};     // fieldId -> dropdown options
+
+// ===== Decode HTML =====
 function decodeHTML(str) {
   if (!str) return "";
   return str
@@ -22,149 +25,208 @@ function decodeHTML(str) {
     .replace(/&#39;/g, "'");
 }
 
-// Fetch all Jira fields (paginated)
+// ===== Fetch ALL Jira Fields (only once) =====
 async function getAllJiraFields() {
-  let startAt = 0, allFields = [], total = 0;
+  let startAt = 0;
+  let total = 0;
+  let allFields = [];
   const maxResults = 100;
 
   do {
     const res = await axios.get(
       `${JIRA_DOMAIN}/rest/api/3/field/search?startAt=${startAt}&maxResults=${maxResults}`,
-      { auth: { username: EMAIL, password: API_TOKEN }, headers: { Accept: "application/json" } }
+      {
+        auth: { username: EMAIL, password: API_TOKEN },
+        headers: { Accept: "application/json" }
+      }
     );
+
     allFields = allFields.concat(res.data.values);
     total = res.data.total;
     startAt += res.data.values.length;
+
   } while (startAt < total);
 
-  console.log(`Total Jira fields fetched: ${allFields.length}`);
+  console.log("Total Jira fields fetched:", allFields.length);
   return allFields;
 }
 
-// Get contexts for a Jira field
-async function getJiraFieldContexts(fieldId) {
-  const res = await axios.get(`${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context`, {
-    auth: { username: EMAIL, password: API_TOKEN },
-    headers: { Accept: "application/json" },
-  });
+// ===== Get Jira Field ID from name =====
+async function getJiraFieldId(accountName) {
+
+  if (fieldCache[accountName]) {
+    return fieldCache[accountName];
+  }
+
+  const jiraFields = await getAllJiraFields();
+
+  const matchingField = jiraFields.find(
+    f => decodeHTML(f.name.trim().toLowerCase()) === accountName
+  );
+
+  if (!matchingField) return null;
+
+  fieldCache[accountName] = matchingField.id;
+
+  console.log("Cached Jira field:", matchingField.name);
+
+  return matchingField.id;
+}
+
+// ===== Get Field Contexts =====
+async function getFieldContexts(fieldId) {
+
+  const res = await axios.get(
+    `${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context`,
+    {
+      auth: { username: EMAIL, password: API_TOKEN },
+      headers: { Accept: "application/json" }
+    }
+  );
+
   return res.data.values || [];
 }
 
-// Get options for a Jira field context
+// ===== Get Options =====
 async function getContextOptions(fieldId, contextId) {
+
   const res = await axios.get(
     `${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context/${contextId}/option`,
-    { auth: { username: EMAIL, password: API_TOKEN }, headers: { Accept: "application/json" } }
+    {
+      auth: { username: EMAIL, password: API_TOKEN },
+      headers: { Accept: "application/json" }
+    }
   );
+
   return res.data.values || [];
 }
 
-// Tempo UUID → friendly name
+// ===== Fetch Jira Options (cached) =====
+async function getJiraOptions(fieldId) {
+
+  if (optionsCache[fieldId]) {
+    return optionsCache[fieldId];
+  }
+
+  const contexts = await getFieldContexts(fieldId);
+
+  for (const ctx of contexts) {
+
+    const options = await getContextOptions(fieldId, ctx.id);
+
+    if (options.length > 0) {
+
+      const formatted = options.map(opt => ({
+        key: decodeHTML(opt.value || ""),
+        value: decodeHTML(opt.value || "")
+      }));
+
+      optionsCache[fieldId] = formatted;
+
+      console.log("Cached options:", formatted.map(o => o.value));
+
+      return formatted;
+    }
+  }
+
+  return [];
+}
+
+// ===== Tempo UUID -> Account Name =====
 async function getTempoAccountName(uuid) {
+
   try {
-    const res = await axios.get("https://api.tempo.io/4/work-attributes/_Account1_", {
-      headers: { Authorization: `Bearer ${TEMPO_BEARER_TOKEN}` },
-    });
+
+    const res = await axios.get(
+      "https://api.tempo.io/4/work-attributes/_Account1_",
+      {
+        headers: { Authorization: `Bearer ${TEMPO_BEARER_TOKEN}` }
+      }
+    );
+
     return res.data.names[uuid];
+
   } catch (err) {
-    console.error("Error fetching Tempo Account1 mapping:", err.message);
+
+    console.error("Tempo API error:", err.message);
     return null;
+
   }
 }
 
-// ===== Main Endpoint =====
+// ===== MAIN API =====
 app.get("/tasks", async (req, res) => {
+
+  console.time("API_RESPONSE_TIME");
+
   const params = req.query;
   console.log("Incoming request params:", params);
 
   // Tempo verification
   if (params.tempoVerificationToken) {
-    console.log("Tempo verification received:", params.tempoVerificationToken);
+
     res.setHeader("X-Tempo-Verification-Token", params.tempoVerificationToken);
-    return res.status(200).send("Tempo verification token received");
+    return res.status(200).send("Tempo verification successful");
+
   }
 
   const callback = params.callback || "fn";
 
-  // Grab first non-meta query param
   let fieldName, fieldValue;
+
   for (const [k, v] of Object.entries(params)) {
+
     if (k === "callback" || k === "tempoVerificationToken") continue;
+
     fieldName = k;
     fieldValue = v;
     break;
+
   }
 
-  console.log("FieldName:", fieldName, "FieldValue:", fieldValue);
+  console.log("Field:", fieldName, "Value:", fieldValue);
 
   let values = [];
 
-  switch (fieldName) {
-    case "firstAttr":
-      try {
-        if (!fieldValue) break;
+  if (fieldName === "firstAttr") {
 
-        console.log("Fetching Tempo friendly name for UUID:", fieldValue);
-        const accountName = (await getTempoAccountName(fieldValue))?.trim().toLowerCase();
-        console.log("Mapped Tempo account name:", accountName);
-        if (!accountName) break;
+    try {
 
-        console.log("Fetching all Jira fields...");
-        const jiraFields = await getAllJiraFields();
+      const accountName = (await getTempoAccountName(fieldValue))?.trim().toLowerCase();
 
-        const matchingField = jiraFields.find(
-          f => decodeHTML(f.name.trim().toLowerCase()) === accountName
-        );
+      console.log("Tempo account:", accountName);
 
-        if (!matchingField) {
-          console.warn(`No Jira field matching '${accountName}' found`);
-          break;
-        }
+      if (!accountName) throw new Error("Account name not found");
 
-        console.log("Matching Jira field found:", matchingField.name);
+      const fieldId = await getJiraFieldId(accountName);
 
-        const contexts = await getJiraFieldContexts(matchingField.id);
-        for (const ctx of contexts) {
-          const options = await getContextOptions(matchingField.id, ctx.id);
-          if (options.length > 0) {
-            values = options.map(opt => ({
-              key: decodeHTML(opt.value || ""),
-              value: decodeHTML(opt.value || "")
-            }));
-            console.log("Options returned:", values.map(v => v.value));
-            break;
-          }
-        }
+      if (!fieldId) throw new Error("Jira field not found");
 
-      } catch (err) {
-        console.error("Error fetching Jira options:", err.message);
-      }
-      break;
+      values = await getJiraOptions(fieldId);
 
-    case "secondAttr":
-      values = [
-        { key: "A", value: "Option A" },
-        { key: "B", value: "Option B" }
-      ];
-      console.log("SecondAttr values:", values);
-      break;
+    } catch (err) {
 
-    default:
-      values = [
-        { key: "1", value: "Category 1" },
-        { key: "2", value: "Category 2" }
-      ];
-      console.log("Default values:", values);
+      console.error("Error:", err.message);
+
+    }
+
   }
 
   const response = `${callback}(${JSON.stringify({ values })})`;
-  console.log("Returning JSONP:", response);
 
   res.setHeader("Content-Type", "application/javascript");
+
   res.status(200).send(response);
+
+  console.timeEnd("API_RESPONSE_TIME");
+
 });
 
-// ===== Start Server =====
+// ===== START SERVER =====
 const PORT = 3000;
-app.listen(PORT, () => console.log(`Tempo dropdown API running on port ${PORT}`));
- 
+
+app.listen(PORT, () => {
+
+  console.log(`Tempo dropdown API running on port ${PORT}`);
+
+});
