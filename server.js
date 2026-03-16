@@ -9,7 +9,7 @@ const EMAIL = process.env.JIRA_EMAIL;
 const API_TOKEN = process.env.JIRA_API_TOKEN;
 const TEMPO_BEARER_TOKEN = process.env.TEMPO_BEARER_TOKEN;
 
-// Decode HTML entities (e.g., &amp; -> &)
+// Decode HTML entities
 function decodeHTML(str) {
   return str.replace(/&amp;/g, "&");
 }
@@ -29,13 +29,10 @@ async function getAllJiraFields() {
         headers: { Accept: "application/json" },
       }
     );
-
-    const data = res.data;
-    allFields = allFields.concat(data.values);
-    total = data.total;
-    startAt += data.values.length;
-
-    console.log(`Fetched ${data.values.length} fields (startAt=${startAt})`);
+    allFields = allFields.concat(res.data.values);
+    total = res.data.total;
+    startAt += res.data.values.length;
+    console.log(`Fetched ${res.data.values.length} fields (startAt=${startAt})`);
   } while (startAt < total);
 
   console.log(`Total Jira fields fetched: ${allFields.length}`);
@@ -48,7 +45,6 @@ async function getJiraFieldContexts(fieldId) {
     auth: { username: EMAIL, password: API_TOKEN },
     headers: { Accept: "application/json" },
   });
-
   console.log(`Fetched ${res.data.values.length} contexts for field ${fieldId}`);
   return res.data.values || [];
 }
@@ -62,7 +58,6 @@ async function getContextOptions(fieldId, contextId) {
       headers: { Accept: "application/json" },
     }
   );
-
   console.log(`Fetched ${res.data.values.length} options for field ${fieldId}, context ${contextId}`);
   return res.data.values || [];
 }
@@ -75,7 +70,7 @@ async function getTempoAccountName(uuid) {
     });
     const names = res.data.names;
     console.log("Tempo names mapping fetched:", names);
-    return names[uuid]; // e.g., "PS", "R&D"
+    return names[uuid];
   } catch (err) {
     console.error("Error fetching Tempo Account1 mapping:", err.message);
     return null;
@@ -91,9 +86,10 @@ app.get("/tasks", async (req, res) => {
     return res.status(200).send("Tempo verification token received");
   }
 
+  // Tempo callback parameter
   const callback = params.callback || "fn";
 
-  // Get first query param as Account1 UUID
+  // Extract the UUID from the first parameter
   let account1Uuid;
   for (const [k, v] of Object.entries(params)) {
     if (k === "callback" || k === "tempoVerificationToken") continue;
@@ -107,7 +103,7 @@ app.get("/tasks", async (req, res) => {
     if (account1Uuid) {
       console.log("Received Tempo UUID:", account1Uuid);
 
-      // Step 1: Convert UUID to friendly name using Tempo API
+      // Step 1: Tempo UUID -> friendly name
       let accountName = await getTempoAccountName(account1Uuid);
       if (!accountName) {
         console.warn(`No Tempo name found for UUID ${account1Uuid}`);
@@ -116,10 +112,10 @@ app.get("/tasks", async (req, res) => {
 
         accountName = decodeHTML(accountName.trim().toLowerCase());
 
-        // Step 2: Fetch all Jira fields (paged)
+        // Step 2: Fetch all Jira fields
         const jiraFields = await getAllJiraFields();
 
-        // Step 3: Find Jira custom field matching the Tempo-friendly name
+        // Step 3: Find matching Jira field
         const matchingField = jiraFields.find(
           (f) => decodeHTML(f.name.trim().toLowerCase()) === accountName
         );
@@ -130,12 +126,12 @@ app.get("/tasks", async (req, res) => {
           console.log("Matching Jira field found:", matchingField);
           const fieldId = matchingField.id;
 
-          // Step 4: Get contexts for the Jira field
+          // Step 4: Get contexts
           const contexts = await getJiraFieldContexts(fieldId);
 
           let contextWithOptions = null;
 
-          // Step 5: Find the first context that has options
+          // Step 5: Find first context with options
           for (const ctx of contexts) {
             const options = await getContextOptions(fieldId, ctx.id);
             if (options.length > 0) {
@@ -147,6 +143,8 @@ app.get("/tasks", async (req, res) => {
           if (contextWithOptions) {
             console.log("Context with options found:", contextWithOptions.ctx);
             console.log("Options:", contextWithOptions.options.map((o) => o.value));
+
+            // Map for Tempo dropdown
             values = contextWithOptions.options.map((opt) => ({
               key: opt.value,
               value: opt.value,
@@ -161,6 +159,7 @@ app.get("/tasks", async (req, res) => {
     console.error("Error fetching Jira options dynamically:", error.message);
   }
 
+  // JSONP response for Tempo
   const response = `${callback}(${JSON.stringify({ values })})`;
   res.setHeader("Content-Type", "application/javascript");
   res.status(200).send(response);
