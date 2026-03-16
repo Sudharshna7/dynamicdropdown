@@ -19,7 +19,7 @@ function decodeHTML(str) {
             .replace(/&#39;/g, "'");
 }
 
-// Fetch all Jira fields using paging
+// Fetch all Jira fields with pagination
 async function getAllJiraFields() {
   let startAt = 0;
   const maxResults = 100;
@@ -38,10 +38,8 @@ async function getAllJiraFields() {
     allFields = allFields.concat(res.data.values);
     total = res.data.total;
     startAt += res.data.values.length;
-    console.log(`Fetched ${res.data.values.length} Jira fields (startAt=${startAt})`);
   } while (startAt < total);
 
-  console.log(`Total Jira fields fetched: ${allFields.length}`);
   return allFields;
 }
 
@@ -51,7 +49,6 @@ async function getJiraFieldContexts(fieldId) {
     auth: { username: EMAIL, password: API_TOKEN },
     headers: { Accept: "application/json" },
   });
-  console.log(`Fetched ${res.data.values.length} contexts for field ${fieldId}`);
   return res.data.values || [];
 }
 
@@ -64,7 +61,6 @@ async function getContextOptions(fieldId, contextId) {
       headers: { Accept: "application/json" },
     }
   );
-  console.log(`Fetched ${res.data.values.length} options for field ${fieldId}, context ${contextId}`);
   return res.data.values || [];
 }
 
@@ -74,16 +70,14 @@ async function getTempoAccountName(uuid) {
     const res = await axios.get("https://api.tempo.io/4/work-attributes/_Account1_", {
       headers: { Authorization: `Bearer ${TEMPO_BEARER_TOKEN}` },
     });
-    const names = res.data.names;
-    console.log("Tempo names mapping fetched:", names);
-    return names[uuid];
+    return res.data.names[uuid];
   } catch (err) {
     console.error("Error fetching Tempo Account1 mapping:", err.message);
     return null;
   }
 }
 
-// Main endpoint for Tempo dropdown
+// Main endpoint
 app.get("/tasks", async (req, res) => {
   const params = req.query;
 
@@ -95,10 +89,12 @@ app.get("/tasks", async (req, res) => {
 
   const callback = params.callback || "fn";
 
-  // Get first parameter value (the Tempo UUID)
-  let account1Uuid;
+  // Capture the original Tempo attribute key and UUID
+  let fieldKey = null;
+  let account1Uuid = null;
   for (const [k, v] of Object.entries(params)) {
     if (k === "callback" || k === "tempoVerificationToken") continue;
+    fieldKey = k;
     account1Uuid = v;
     break;
   }
@@ -106,15 +102,10 @@ app.get("/tasks", async (req, res) => {
   let values = [];
 
   try {
-    if (account1Uuid) {
-      console.log("Received Tempo UUID:", account1Uuid);
-
+    if (account1Uuid && fieldKey) {
       // Step 1: Tempo UUID -> friendly name
       let accountName = await getTempoAccountName(account1Uuid);
-      if (!accountName) {
-        console.warn(`No Tempo name found for UUID ${account1Uuid}`);
-      } else {
-        console.log("Tempo UUID mapped to friendly name:", accountName);
+      if (accountName) {
         accountName = decodeHTML(accountName.trim().toLowerCase());
 
         // Step 2: Fetch all Jira fields
@@ -125,37 +116,22 @@ app.get("/tasks", async (req, res) => {
           (f) => decodeHTML(f.name.trim().toLowerCase()) === accountName
         );
 
-        if (!matchingField) {
-          console.warn(`No Jira custom field found named '${accountName}'`);
-        } else {
-          console.log("Matching Jira field found:", matchingField);
+        if (matchingField) {
           const fieldId = matchingField.id;
 
           // Step 4: Get contexts
           const contexts = await getJiraFieldContexts(fieldId);
 
-          let contextWithOptions = null;
-
           // Step 5: Find first context with options
           for (const ctx of contexts) {
             const options = await getContextOptions(fieldId, ctx.id);
             if (options.length > 0) {
-              contextWithOptions = { ctx, options };
+              values = options.map((opt) => ({
+                key: decodeHTML(opt.value || ""),
+                value: decodeHTML(opt.value || ""),
+              }));
               break;
             }
-          }
-
-          if (contextWithOptions) {
-            console.log("Context with options found:", contextWithOptions.ctx);
-            console.log("Options:", contextWithOptions.options.map((o) => o.value));
-
-            // Map for Tempo dropdown, decode HTML & handle nulls
-            values = contextWithOptions.options.map((opt) => ({
-              key: decodeHTML(opt.value || ""),
-              value: decodeHTML(opt.value || ""),
-            }));
-          } else {
-            console.warn(`No options found in any context for Jira field '${fieldId}'`);
           }
         }
       }
@@ -164,9 +140,8 @@ app.get("/tasks", async (req, res) => {
     console.error("Error fetching Jira options dynamically:", error.message);
   }
 
-  // Return JSONP response for Tempo
-  const response = `${callback}(${JSON.stringify({ values })})`;
-  console.log("Tempo JSONP response:", response);
+  // Return JSONP keyed by the original Tempo attribute
+  const response = `${callback}(${JSON.stringify({ [fieldKey]: values })})`;
   res.setHeader("Content-Type", "application/javascript");
   res.status(200).send(response);
 });
