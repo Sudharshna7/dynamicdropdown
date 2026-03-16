@@ -8,37 +8,36 @@ const JIRA_DOMAIN = process.env.JIRA_DOMAIN;
 const EMAIL = process.env.JIRA_EMAIL;
 const API_TOKEN = process.env.JIRA_API_TOKEN;
 
-// Utility to get all custom fields
-async function getCustomFields() {
-  const response = await axios.get(`${JIRA_DOMAIN}/rest/api/3/field`, {
+// Helper: Get all Jira custom fields
+async function getJiraCustomFields() {
+  const res = await axios.get(`${JIRA_DOMAIN}/rest/api/3/field`, {
     auth: { username: EMAIL, password: API_TOKEN },
     headers: { Accept: "application/json" }
   });
-  return response.data;
+  return res.data;
 }
 
-// Utility to get all contexts for a custom field
-async function getCustomFieldContexts(fieldId) {
-  const response = await axios.get(`${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context`, {
+// Helper: Get contexts for a Jira custom field
+async function getJiraFieldContexts(fieldId) {
+  const res = await axios.get(`${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context`, {
     auth: { username: EMAIL, password: API_TOKEN },
     headers: { Accept: "application/json" }
   });
-  return response.data.values || [];
+  return res.data.values || [];
 }
 
-// Utility to get options for a context
+// Helper: Get options for a Jira custom field context
 async function getContextOptions(fieldId, contextId) {
-  const response = await axios.get(`${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context/${contextId}/option`, {
+  const res = await axios.get(`${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context/${contextId}/option`, {
     auth: { username: EMAIL, password: API_TOKEN },
     headers: { Accept: "application/json" }
   });
-  return response.data.values || [];
+  return res.data.values || [];
 }
 
 app.get("/tasks", async (req, res) => {
   const params = req.query;
 
-  // Tempo verification
   if (params.tempoVerificationToken) {
     res.setHeader("X-Tempo-Verification-Token", params.tempoVerificationToken);
     return res.status(200).send("Tempo verification token received");
@@ -46,6 +45,7 @@ app.get("/tasks", async (req, res) => {
 
   const callback = params.callback || "fn";
 
+  // Extract the fieldName and fieldValue from query params (skip known params)
   let fieldName, fieldValue;
   for (const [k, v] of Object.entries(params)) {
     if (k === "callback" || k === "tempoVerificationToken") continue;
@@ -57,28 +57,36 @@ app.get("/tasks", async (req, res) => {
   let values = [];
 
   try {
-    if (fieldName === "firstAttr" && fieldValue) {
-      // 1. Get all custom fields
-      const fields = await getCustomFields();
+    if (fieldName && fieldValue) {
+      // Step 1: Find Jira custom field by matching the fieldName with Jira custom field name
+      // Adjust matching logic if needed (e.g., ignore case, prefix "Account1" etc.)
+      const jiraFields = await getJiraCustomFields();
 
-      // 2. Find the custom field that matches this Tempo selection
-      //    You need some mapping rule here. For example, maybe the custom field name contains the fieldValue
-      const matchingField = fields.find(f => f.name.toLowerCase().includes(fieldValue.toLowerCase()));
-
-      if (matchingField) {
+      // Match field by name exactly or by some heuristic
+      const matchingField = jiraFields.find(f => f.name.toLowerCase() === fieldName.toLowerCase());
+      if (!matchingField) {
+        console.warn(`No matching Jira custom field found for '${fieldName}'`);
+      } else {
         const fieldId = matchingField.id;
 
-        // 3. Get all contexts for this custom field
-        const contexts = await getCustomFieldContexts(fieldId);
+        // Step 2: Get contexts for this custom field
+        const contexts = await getJiraFieldContexts(fieldId);
+        if (contexts.length === 0) {
+          console.warn(`No contexts found for Jira field '${fieldId}'`);
+        } else {
+          // Step 3: Pick a context
+          // TODO: Improve logic to select context based on project or other criteria
+          const context = contexts[0];
 
-        // 4. Pick a context (you could choose first, or filter by something)
-        const context = contexts[0]; // adjust this logic if needed
-
-        if (context) {
-          // 5. Get options for this context
+          // Step 4: Fetch options for the chosen context
           const options = await getContextOptions(fieldId, context.id);
 
-          values = options.map(opt => ({ key: opt.value, value: opt.value }));
+          // Step 5: Filter options if needed (optional, if you want to filter based on fieldValue)
+          // Here, just return all options for the context
+          values = options.map(opt => ({
+            key: opt.value,
+            value: opt.value
+          }));
         }
       }
     }
