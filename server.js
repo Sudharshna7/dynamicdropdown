@@ -9,7 +9,7 @@ const EMAIL = process.env.JIRA_EMAIL;
 const API_TOKEN = process.env.JIRA_API_TOKEN;
 const TEMPO_BEARER_TOKEN = process.env.TEMPO_BEARER_TOKEN;
 
-// Decode HTML entities
+// Decode HTML entities (e.g., &amp; → &)
 function decodeHTML(str) {
   return str.replace(/&amp;/g, "&");
 }
@@ -29,10 +29,11 @@ async function getAllJiraFields() {
         headers: { Accept: "application/json" },
       }
     );
+
     allFields = allFields.concat(res.data.values);
     total = res.data.total;
     startAt += res.data.values.length;
-    console.log(`Fetched ${res.data.values.length} fields (startAt=${startAt})`);
+    console.log(`Fetched ${res.data.values.length} Jira fields (startAt=${startAt})`);
   } while (startAt < total);
 
   console.log(`Total Jira fields fetched: ${allFields.length}`);
@@ -62,7 +63,7 @@ async function getContextOptions(fieldId, contextId) {
   return res.data.values || [];
 }
 
-// Get friendly name from Tempo UUID
+// Map Tempo UUID -> friendly name
 async function getTempoAccountName(uuid) {
   try {
     const res = await axios.get("https://api.tempo.io/4/work-attributes/_Account1_", {
@@ -80,16 +81,15 @@ async function getTempoAccountName(uuid) {
 app.get("/tasks", async (req, res) => {
   const params = req.query;
 
-  // Tempo verification
+  // Tempo verification token
   if (params.tempoVerificationToken) {
     res.setHeader("X-Tempo-Verification-Token", params.tempoVerificationToken);
     return res.status(200).send("Tempo verification token received");
   }
 
-  // Tempo callback parameter
   const callback = params.callback || "fn";
 
-  // Extract the UUID from the first parameter
+  // Get first parameter value (the Tempo UUID)
   let account1Uuid;
   for (const [k, v] of Object.entries(params)) {
     if (k === "callback" || k === "tempoVerificationToken") continue;
@@ -109,13 +109,12 @@ app.get("/tasks", async (req, res) => {
         console.warn(`No Tempo name found for UUID ${account1Uuid}`);
       } else {
         console.log("Tempo UUID mapped to friendly name:", accountName);
-
         accountName = decodeHTML(accountName.trim().toLowerCase());
 
         // Step 2: Fetch all Jira fields
         const jiraFields = await getAllJiraFields();
 
-        // Step 3: Find matching Jira field
+        // Step 3: Match Jira custom field by name
         const matchingField = jiraFields.find(
           (f) => decodeHTML(f.name.trim().toLowerCase()) === accountName
         );
@@ -159,7 +158,7 @@ app.get("/tasks", async (req, res) => {
     console.error("Error fetching Jira options dynamically:", error.message);
   }
 
-  // JSONP response for Tempo
+  // Return JSONP response for Tempo
   const response = `${callback}(${JSON.stringify({ values })})`;
   res.setHeader("Content-Type", "application/javascript");
   res.status(200).send(response);
