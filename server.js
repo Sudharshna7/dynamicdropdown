@@ -37,6 +37,7 @@ async function getAllJiraFields() {
     startAt += res.data.values.length;
   } while (startAt < total);
 
+  console.log(`Total Jira fields fetched: ${allFields.length}`);
   return allFields;
 }
 
@@ -74,9 +75,11 @@ async function getTempoAccountName(uuid) {
 // ===== Main Endpoint =====
 app.get("/tasks", async (req, res) => {
   const params = req.query;
+  console.log("Incoming request params:", params);
 
   // Tempo verification
   if (params.tempoVerificationToken) {
+    console.log("Tempo verification received:", params.tempoVerificationToken);
     res.setHeader("X-Tempo-Verification-Token", params.tempoVerificationToken);
     return res.status(200).send("Tempo verification token received");
   }
@@ -92,22 +95,33 @@ app.get("/tasks", async (req, res) => {
     break;
   }
 
+  console.log("FieldName:", fieldName, "FieldValue:", fieldValue);
+
   let values = [];
 
   switch (fieldName) {
     case "firstAttr":
-    case "secondAttr":
       try {
         if (!fieldValue) break;
 
+        console.log("Fetching Tempo friendly name for UUID:", fieldValue);
         const accountName = (await getTempoAccountName(fieldValue))?.trim().toLowerCase();
+        console.log("Mapped Tempo account name:", accountName);
         if (!accountName) break;
 
+        console.log("Fetching all Jira fields...");
         const jiraFields = await getAllJiraFields();
+
         const matchingField = jiraFields.find(
           f => decodeHTML(f.name.trim().toLowerCase()) === accountName
         );
-        if (!matchingField) break;
+
+        if (!matchingField) {
+          console.warn(`No Jira field matching '${accountName}' found`);
+          break;
+        }
+
+        console.log("Matching Jira field found:", matchingField.name);
 
         const contexts = await getJiraFieldContexts(matchingField.id);
         for (const ctx of contexts) {
@@ -117,24 +131,35 @@ app.get("/tasks", async (req, res) => {
               key: decodeHTML(opt.value || ""),
               value: decodeHTML(opt.value || "")
             }));
+            console.log("Options returned:", values.map(v => v.value));
             break;
           }
         }
+
       } catch (err) {
         console.error("Error fetching Jira options:", err.message);
       }
       break;
 
+    case "secondAttr":
+      values = [
+        { key: "A", value: "Option A" },
+        { key: "B", value: "Option B" }
+      ];
+      console.log("SecondAttr values:", values);
+      break;
+
     default:
-      // fallback static options
       values = [
         { key: "1", value: "Category 1" },
         { key: "2", value: "Category 2" }
       ];
+      console.log("Default values:", values);
   }
 
-  // Return JSONP using key "values" (frontend expects this)
   const response = `${callback}(${JSON.stringify({ values })})`;
+  console.log("Returning JSONP:", response);
+
   res.setHeader("Content-Type", "application/javascript");
   res.status(200).send(response);
 });
