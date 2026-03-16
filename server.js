@@ -34,8 +34,11 @@ async function getAllJiraFields() {
     allFields = allFields.concat(data.values);
     total = data.total;
     startAt += data.values.length;
+
+    console.log(`Fetched ${data.values.length} fields (startAt=${startAt})`);
   } while (startAt < total);
 
+  console.log(`Total Jira fields fetched: ${allFields.length}`);
   return allFields;
 }
 
@@ -45,6 +48,8 @@ async function getJiraFieldContexts(fieldId) {
     auth: { username: EMAIL, password: API_TOKEN },
     headers: { Accept: "application/json" },
   });
+
+  console.log(`Fetched ${res.data.values.length} contexts for field ${fieldId}`);
   return res.data.values || [];
 }
 
@@ -57,6 +62,8 @@ async function getContextOptions(fieldId, contextId) {
       headers: { Accept: "application/json" },
     }
   );
+
+  console.log(`Fetched ${res.data.values.length} options for field ${fieldId}, context ${contextId}`);
   return res.data.values || [];
 }
 
@@ -67,6 +74,7 @@ async function getTempoAccountName(uuid) {
       headers: { Authorization: `Bearer ${TEMPO_BEARER_TOKEN}` },
     });
     const names = res.data.names;
+    console.log("Tempo names mapping fetched:", names);
     return names[uuid]; // e.g., "PS", "R&D"
   } catch (err) {
     console.error("Error fetching Tempo Account1 mapping:", err.message);
@@ -97,11 +105,15 @@ app.get("/tasks", async (req, res) => {
 
   try {
     if (account1Uuid) {
+      console.log("Received Tempo UUID:", account1Uuid);
+
       // Step 1: Convert UUID to friendly name using Tempo API
       let accountName = await getTempoAccountName(account1Uuid);
       if (!accountName) {
         console.warn(`No Tempo name found for UUID ${account1Uuid}`);
       } else {
+        console.log("Tempo UUID mapped to friendly name:", accountName);
+
         accountName = decodeHTML(accountName.trim().toLowerCase());
 
         // Step 2: Fetch all Jira fields (paged)
@@ -115,21 +127,32 @@ app.get("/tasks", async (req, res) => {
         if (!matchingField) {
           console.warn(`No Jira custom field found named '${accountName}'`);
         } else {
+          console.log("Matching Jira field found:", matchingField);
           const fieldId = matchingField.id;
 
           // Step 4: Get contexts for the Jira field
           const contexts = await getJiraFieldContexts(fieldId);
-          if (contexts.length === 0) {
-            console.warn(`No contexts found for Jira field '${fieldId}'`);
+
+          let contextWithOptions = null;
+
+          // Step 5: Find the first context that has options
+          for (const ctx of contexts) {
+            const options = await getContextOptions(fieldId, ctx.id);
+            if (options.length > 0) {
+              contextWithOptions = { ctx, options };
+              break;
+            }
+          }
+
+          if (contextWithOptions) {
+            console.log("Context with options found:", contextWithOptions.ctx);
+            console.log("Options:", contextWithOptions.options.map((o) => o.value));
+            values = contextWithOptions.options.map((opt) => ({
+              key: opt.value,
+              value: opt.value,
+            }));
           } else {
-            // Pick first context (can enhance to pick by project if needed)
-            const context = contexts[0];
-
-            // Step 5: Get options for the context
-            const options = await getContextOptions(fieldId, context.id);
-
-            // Step 6: Map to key/value for Tempo dropdown
-            values = options.map((opt) => ({ key: opt.value, value: opt.value }));
+            console.warn(`No options found in any context for Jira field '${fieldId}'`);
           }
         }
       }
