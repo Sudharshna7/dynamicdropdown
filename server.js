@@ -1,7 +1,14 @@
 const express = require("express");
+const axios = require("axios");
+require("dotenv").config();
+
 const app = express();
 
-app.get("/tasks", (req, res) => {
+const JIRA_DOMAIN = process.env.JIRA_DOMAIN;
+const EMAIL = process.env.JIRA_EMAIL;
+const API_TOKEN = process.env.JIRA_API_TOKEN;
+
+app.get("/tasks", async (req, res) => {
 
   const params = req.query;
 
@@ -22,48 +29,41 @@ app.get("/tasks", (req, res) => {
 
   let values = [];
 
-  switch (fieldName) {
+  try {
 
-    case "firstAttr":
-        if (fieldValue === "f2d236ad-b8a8-42f3-aed4-e46b6d81288c") {
-            values = [
-            { key: "Agile Ceremonies and Project Management", value: "Agile Ceremonies and Project Management" },
-            { key: "New Feature Development", value: "New Feature Development" }
-            ];
-        }
-        else if (fieldValue === "3f3c1a34-a76e-45b1-87ca-063dbe62d44b") {
-            values = [
-            { key: "Defect Resolution - Externally Found", value: "Defect Resolution - Externally Found" },
-            { key: "Post Deployment Support", value: "Post Deployment Support" }
-            ];
-        }
-        else if (fieldValue === "f934440e-1edd-4789-9464-de5027b5acd2") {
-            values = [
-            { key: "Concept and Release Planning", value: "Concept and Release Planning" },
-            { key: "Product and Solution Testing", value: "Product and Solution Testing" }
-            ];
-        }
-        break;
+    if (fieldName === "firstAttr") {
 
-    case "secondAttr":
-      values = [
-        { key: "A", value: "Option A" },
-        { key: "B", value: "Option B" }
-      ];
-      break;
+      const response = await axios.get(
+        `${JIRA_DOMAIN}/rest/api/3/field/customfield_10608/context/10909/option`,
+        {
+          auth: {
+            username: EMAIL,
+            password: API_TOKEN
+          },
+          headers: {
+            Accept: "application/json"
+          }
+        }
+      );
 
-    default:
-      values = [
-        { key: "1", value: "Category 1" },
-        { key: "2", value: "Category 2" },
-        { key: "3", value: "Category 3" }
-      ];
+      const jiraOptions = response.data.values;
+
+      values = jiraOptions.map(opt => ({
+        key: opt.value,
+        value: opt.value
+      }));
+
+    }
+
+  } catch (error) {
+    console.error("Error fetching Jira options:", error.message);
   }
 
   const response = `${callback}(${JSON.stringify({ values })})`;
 
   res.setHeader("Content-Type", "application/javascript");
   res.status(200).send(response);
+
 });
 
 app.listen(3000, () => {
