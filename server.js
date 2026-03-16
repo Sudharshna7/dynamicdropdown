@@ -1,27 +1,33 @@
+// server.js
 const express = require("express");
 const axios = require("axios");
 require("dotenv").config();
 
 const app = express();
 
-const JIRA_DOMAIN = process.env.JIRA_DOMAIN;
+// ====== Environment Variables ======
+const JIRA_DOMAIN = process.env.JIRA_DOMAIN; // e.g., "https://yourcompany.atlassian.net"
 const EMAIL = process.env.JIRA_EMAIL;
 const API_TOKEN = process.env.JIRA_API_TOKEN;
 const TEMPO_BEARER_TOKEN = process.env.TEMPO_BEARER_TOKEN;
 
-// Decode HTML entities
+// ====== Helper Functions ======
+
+// Decode HTML entities from Jira options
 function decodeHTML(str) {
   if (!str) return "";
-  return str.replace(/&amp;/g, "&")
-            .replace(/&lt;/g, "<")
-            .replace(/&gt;/g, ">")
-            .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'");
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 }
 
-// Fetch all Jira fields
+// Fetch all Jira fields (paginated)
 async function getAllJiraFields() {
-  let startAt = 0, allFields = [];
+  let startAt = 0,
+    allFields = [];
   const maxResults = 100;
   let total = 0;
 
@@ -70,7 +76,7 @@ async function getTempoAccountName(uuid) {
   }
 }
 
-// Main endpoint
+// ====== Main Endpoint ======
 app.get("/tasks", async (req, res) => {
   const params = req.query;
 
@@ -101,7 +107,9 @@ app.get("/tasks", async (req, res) => {
         const jiraFields = await getAllJiraFields();
 
         // Step 3: Match Jira field by friendly name
-        const matchingField = jiraFields.find(f => decodeHTML(f.name.trim().toLowerCase()) === accountName);
+        const matchingField = jiraFields.find(
+          (f) => decodeHTML(f.name.trim().toLowerCase()) === accountName
+        );
         if (matchingField) {
           console.log("Matching Jira field found:", matchingField.name);
 
@@ -112,12 +120,12 @@ app.get("/tasks", async (req, res) => {
           for (const ctx of contexts) {
             const options = await getContextOptions(matchingField.id, ctx.id);
             if (options.length > 0) {
-              values = options.map(opt => ({
+              values = options.map((opt) => ({
                 key: decodeHTML(opt.value || ""),
-                value: decodeHTML(opt.value || "")
+                value: decodeHTML(opt.value || ""),
               }));
-              console.log("Options returned:", values.map(v => v.value));
-              break;
+              console.log("Options returned:", values.map((v) => v.value));
+              break; // only first context with options
             }
           }
         } else {
@@ -131,12 +139,14 @@ app.get("/tasks", async (req, res) => {
     }
   }
 
-  // Step 6: Return JSONP keyed by Task1 (dependent dropdown)
-  const response = `${callback}(${JSON.stringify({ Task1: values })})`;
-  console.log("Returning JSONP for Task1:", response);
+  // Step 6: Return JSONP using key 'values' (like version 1)
+  const response = `${callback}(${JSON.stringify({ values })})`;
+  console.log("Returning JSONP for values:", response);
 
   res.setHeader("Content-Type", "application/javascript");
   res.status(200).send(response);
 });
 
-app.listen(3000, () => console.log("Tempo dropdown API running on port 3000"));
+// ====== Start Server ======
+const PORT = 3000;
+app.listen(PORT, () => console.log(`Tempo dropdown API running on port ${PORT}`));
