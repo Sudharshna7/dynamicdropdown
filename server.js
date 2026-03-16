@@ -11,8 +11,7 @@ const API_TOKEN = process.env.JIRA_API_TOKEN;
 const TEMPO_BEARER_TOKEN = process.env.TEMPO_BEARER_TOKEN;
 
 // ===== CACHE =====
-const fieldCache = {};       // accountName -> fieldId
-const optionsCache = {};     // fieldId -> dropdown options
+const fieldCache = {}; // accountName -> fieldId
 
 // ===== Decode HTML =====
 function decodeHTML(str) {
@@ -25,14 +24,16 @@ function decodeHTML(str) {
     .replace(/&#39;/g, "'");
 }
 
-// ===== Fetch ALL Jira Fields (only once) =====
+// ===== Fetch ALL Jira Fields =====
 async function getAllJiraFields() {
+
   let startAt = 0;
   let total = 0;
   let allFields = [];
   const maxResults = 100;
 
   do {
+
     const res = await axios.get(
       `${JIRA_DOMAIN}/rest/api/3/field/search?startAt=${startAt}&maxResults=${maxResults}`,
       {
@@ -48,10 +49,11 @@ async function getAllJiraFields() {
   } while (startAt < total);
 
   console.log("Total Jira fields fetched:", allFields.length);
+
   return allFields;
 }
 
-// ===== Get Jira Field ID from name =====
+// ===== Get Jira Field ID =====
 async function getJiraFieldId(accountName) {
 
   if (fieldCache[accountName]) {
@@ -87,7 +89,7 @@ async function getFieldContexts(fieldId) {
   return res.data.values || [];
 }
 
-// ===== Get Options =====
+// ===== Get Context Options =====
 async function getContextOptions(fieldId, contextId) {
 
   const res = await axios.get(
@@ -101,12 +103,8 @@ async function getContextOptions(fieldId, contextId) {
   return res.data.values || [];
 }
 
-// ===== Fetch Jira Options (cached) =====
+// ===== Fetch Jira Options (NO CACHE) =====
 async function getJiraOptions(fieldId) {
-
-  if (optionsCache[fieldId]) {
-    return optionsCache[fieldId];
-  }
 
   const contexts = await getFieldContexts(fieldId);
 
@@ -121,9 +119,7 @@ async function getJiraOptions(fieldId) {
         value: decodeHTML(opt.value || "")
       }));
 
-      optionsCache[fieldId] = formatted;
-
-      console.log("Cached options:", formatted.map(o => o.value));
+      console.log("Fetched options:", formatted.map(o => o.value));
 
       return formatted;
     }
@@ -160,12 +156,14 @@ app.get("/tasks", async (req, res) => {
   console.time("API_RESPONSE_TIME");
 
   const params = req.query;
+
   console.log("Incoming request params:", params);
 
   // Tempo verification
   if (params.tempoVerificationToken) {
 
     res.setHeader("X-Tempo-Verification-Token", params.tempoVerificationToken);
+
     return res.status(200).send("Tempo verification successful");
 
   }
