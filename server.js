@@ -11,7 +11,12 @@ const TEMPO_BEARER_TOKEN = process.env.TEMPO_BEARER_TOKEN;
 
 // Decode HTML entities (e.g., &amp; → &)
 function decodeHTML(str) {
-  return str.replace(/&amp;/g, "&");
+  if (!str) return "";
+  return str.replace(/&amp;/g, "&")
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'");
 }
 
 // Fetch all Jira fields using paging
@@ -78,6 +83,7 @@ async function getTempoAccountName(uuid) {
   }
 }
 
+// Main endpoint for Tempo dropdown
 app.get("/tasks", async (req, res) => {
   const params = req.query;
 
@@ -143,10 +149,10 @@ app.get("/tasks", async (req, res) => {
             console.log("Context with options found:", contextWithOptions.ctx);
             console.log("Options:", contextWithOptions.options.map((o) => o.value));
 
-            // Map for Tempo dropdown
+            // Map for Tempo dropdown, decode HTML & handle nulls
             values = contextWithOptions.options.map((opt) => ({
-              key: opt.value,
-              value: opt.value,
+              key: decodeHTML(opt.value || ""),
+              value: decodeHTML(opt.value || ""),
             }));
           } else {
             console.warn(`No options found in any context for Jira field '${fieldId}'`);
@@ -160,6 +166,7 @@ app.get("/tasks", async (req, res) => {
 
   // Return JSONP response for Tempo
   const response = `${callback}(${JSON.stringify({ values })})`;
+  console.log("Tempo JSONP response:", response);
   res.setHeader("Content-Type", "application/javascript");
   res.status(200).send(response);
 });
