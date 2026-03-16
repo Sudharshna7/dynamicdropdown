@@ -35,10 +35,11 @@ async function getAllJiraFields() {
     startAt += res.data.values.length;
   } while (startAt < total);
 
+  console.log(`Total Jira fields fetched: ${allFields.length}`);
   return allFields;
 }
 
-// Get contexts
+// Get contexts for a Jira field
 async function getJiraFieldContexts(fieldId) {
   const res = await axios.get(`${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context`, {
     auth: { username: EMAIL, password: API_TOKEN },
@@ -47,7 +48,7 @@ async function getJiraFieldContexts(fieldId) {
   return res.data.values || [];
 }
 
-// Get options
+// Get options for a Jira field context
 async function getContextOptions(fieldId, contextId) {
   const res = await axios.get(
     `${JIRA_DOMAIN}/rest/api/3/field/${fieldId}/context/${contextId}/option`,
@@ -73,51 +74,67 @@ async function getTempoAccountName(uuid) {
 app.get("/tasks", async (req, res) => {
   const params = req.query;
 
+  // Tempo verification
   if (params.tempoVerificationToken) {
+    console.log("Tempo verification received:", params.tempoVerificationToken);
     res.setHeader("X-Tempo-Verification-Token", params.tempoVerificationToken);
     return res.status(200).send("Tempo verification token received");
   }
 
   const callback = params.callback || "fn";
+  console.log("Incoming request params:", params);
 
-  // Grab the selected Account1 UUID
-  const account1Uuid = params.Account1 || params.firstAttr; // fallback if you used firstAttr
+  // Grab the Account1 UUID from query parameter (Tempo sends firstAttr or Account1)
+  const account1Uuid = params.Account1 || params.firstAttr;
+  console.log("Account1 UUID selected:", account1Uuid);
+
   let values = [];
 
   if (account1Uuid) {
     try {
-      // Step 1: UUID → friendly name
+      // Step 1: Convert UUID → friendly name (PS, R&D, etc.)
       const accountName = (await getTempoAccountName(account1Uuid))?.trim().toLowerCase();
+      console.log("Mapped Account1 friendly name:", accountName);
 
       if (accountName) {
-        // Step 2: Find Jira custom field matching this Account name
+        // Step 2: Fetch all Jira fields
         const jiraFields = await getAllJiraFields();
+
+        // Step 3: Match Jira field by friendly name
         const matchingField = jiraFields.find(f => decodeHTML(f.name.trim().toLowerCase()) === accountName);
-
         if (matchingField) {
-          const fieldId = matchingField.id;
-          const contexts = await getJiraFieldContexts(fieldId);
+          console.log("Matching Jira field found:", matchingField.name);
 
-          // Step 3: Use first context with options
+          // Step 4: Get contexts
+          const contexts = await getJiraFieldContexts(matchingField.id);
+
+          // Step 5: Find first context with options
           for (const ctx of contexts) {
-            const options = await getContextOptions(fieldId, ctx.id);
+            const options = await getContextOptions(matchingField.id, ctx.id);
             if (options.length > 0) {
               values = options.map(opt => ({
                 key: decodeHTML(opt.value || ""),
                 value: decodeHTML(opt.value || "")
               }));
+              console.log("Options returned:", values.map(v => v.value));
               break;
             }
           }
+        } else {
+          console.warn(`No Jira field matching friendly name '${accountName}' found.`);
         }
+      } else {
+        console.warn(`No Tempo friendly name found for UUID: ${account1Uuid}`);
       }
     } catch (err) {
       console.error("Error fetching Jira options:", err.message);
     }
   }
 
-  // Step 4: Return JSONP keyed by Task1
+  // Step 6: Return JSONP keyed by Task1 (dependent dropdown)
   const response = `${callback}(${JSON.stringify({ Task1: values })})`;
+  console.log("Returning JSONP for Task1:", response);
+
   res.setHeader("Content-Type", "application/javascript");
   res.status(200).send(response);
 });
